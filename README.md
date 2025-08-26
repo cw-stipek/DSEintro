@@ -1,5 +1,5 @@
 # virtual_index_card
-DSE 511 Project
+DSE 511 Project - The purpose of this repository is an introductory format to learn how to pull / push code and proper management.  
 
 Name : Clinton Stipek
 Pets : No pets, but plan to adopt a dog next year to further distract me from my doctorate
