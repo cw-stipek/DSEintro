@@ -1,5 +1,8 @@
+
+
+
 def main():
-    print("Depending on the day, Clinton works on a few different projects. Would you like to know about his undergraduate, graduate school or his professional career?")
+    print("Would you like to know about Clinton's undergraduate, graduate school or his professional career?")
     print("Options: undergraduate, graduate, professional")
     clinton_phase = input("Enter your choice: ").strip().lower()
 
