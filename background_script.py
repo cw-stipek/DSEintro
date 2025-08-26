@@ -1,4 +1,5 @@
-
+### Name: Clinton Stipek
+### Fun Fact: Clinton likes to travel alot and used to live in a van picking fruit in New Zealand. 
 
 
 def main():
