@@ -9,3 +9,5 @@ Favorite 3-5 classes:
 3) Physics
 4) Geographic Information Science
 5) Psychology
+
+Python environment:3.9.12
