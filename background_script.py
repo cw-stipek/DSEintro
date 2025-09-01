@@ -22,7 +22,7 @@ if __name__ == "__main__":
     main()
 
 
-###Additional workflows - ML
+###Additional workflows - Unsupervised ML
 df = pd.read_sql_query("""
                             SELECT a.height, b.*
                             FROM xp_clustering.chicago a
@@ -123,3 +123,263 @@ results_2 = pd.DataFrame({
     'cluster_hdbscan': hdb_labels,
     'hdb_outlier_score': hdb_outlier
 })
+
+
+###Workflow - Supervised ML
+
+print(df.info())
+df.rename(columns={'median':'height'}, inplace=True)
+
+
+#Removing all buildings less than 2 m due to potential unwanted structures (sheds, bike stops, bus stops, etc...)
+df = df[df['height']>2]
+df = df[df['height']<200]
+
+print(df.height.describe())
+
+# Calculating median
+df['median']=df.height.median()
+
+height = df['height'].to_numpy()
+median = df['median'].to_numpy()
+
+# 4. calculating the mean absolute error
+print('MAE:',mean_absolute_error(height, median))
+# 5. calculating the root mean squared error
+print('RMSE:',np.sqrt(mean_squared_error(height, median)))
+df.drop(columns=['median'], inplace=True)
+
+
+y = df.loc[:, df.columns == 'height']
+X = df.loc[:, df.columns != 'height']
+
+# split data into train and test sets
+X_train, X_test_beta, y_train, y_test_beta = train_test_split(X, y, test_size=0.3, random_state=13)
+
+#Standard scaler
+sc = StandardScaler()
+sc.fit(X_train)
+#Fitting to the training data
+X_train_scaled = sc.transform(X_train)
+
+#converting from array to dataframe with original columns
+X_train_scaled = pd.DataFrame(X_train_scaled, columns=X_train.columns)
+
+#saving scaler
+dump(sc, 'my_standard_scaler.pkl')
+
+#loading scaler
+same_scaler = load('my_standard_scaler.pkl')
+
+#applying scaler to testing data
+X_test_scaled_beta = same_scaler.transform(X_test_beta)
+
+#converting from array to dataframe with original columns
+X_test_scaled_beta = pd.DataFrame(X_test_scaled_beta, columns=X_test_beta.columns)
+
+#Alpha training data
+X = X_train_scaled
+y = y_train
+print(len(X))
+print(len(y))
+
+# Assuming you have defined your dataset as X and y
+print('Starting the bayesian optimization')
+
+start_time = datetime.now()
+
+# Assuming you have defined your dataset as X and y
+
+space = {
+    'max_depth': hp.quniform("max_depth", 1, 15, 1),
+    'gamma': hp.uniform('gamma', 1, 10),
+    'reg_alpha': hp.quniform('reg_alpha', 20, 100, 1),
+    'reg_lambda': hp.uniform('reg_lambda', 0, 1),
+    'colsample_bytree': hp.uniform('colsample_bytree', 0.5, 1),
+    'min_child_weight': hp.quniform('min_child_weight', 0, 20, 1),
+    'n_estimators': hp.quniform('n_estimators', 10, 600, 10),
+    'learning_rate': hp.uniform('learning_rate', 0.001, 0.5)
+}
+
+def hyper_tuning(space):
+    model = XGBRegressor(n_estimators=int(space['n_estimators']),
+                         max_depth=int(space['max_depth']),
+                         gamma=space['gamma'],
+                         reg_alpha=space['reg_alpha'],
+                         reg_lambda=space['reg_lambda'],
+                         colsample_bytree=space['colsample_bytree'],
+                         min_child_weight=space['min_child_weight'],
+                         learning_rate=space['learning_rate'],
+                         random_state=13)
+    
+    # Perform k-fold cross-validation (e.g., k=5)
+    k = 10
+    kf = KFold(n_splits=k, shuffle=True, random_state=42)
+    cv_scores = []
+    
+    for train_idx, test_idx in kf.split(X):
+        X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
+        y_train, y_test = y.iloc[train_idx], y.iloc[test_idx]
+        
+        model.fit(X_train, y_train)
+        y_pred = model.predict(X_test)
+        mse = mean_squared_error(y_test, y_pred)
+        cv_scores.append(mse)
+    
+    # Calculate the mean RMSE (neg_mean_squared_error gives negative values)
+    mse_mean = np.mean(cv_scores)
+    print("Mean Cross-Validation RMSE:", np.sqrt(mse_mean))
+    
+    return {'loss': mse_mean, 'status': STATUS_OK, 'model': model}
+
+trials = Trials()
+best = fmin(fn=hyper_tuning,
+            space=space,
+            algo=tpe.suggest,
+            max_evals=100, # Increase max_evals for more iterations
+            trials=trials)
+
+end_time = datetime.now()
+
+print('Duration of hyper_tuning: {}'.format(end_time-start_time))
+
+print('\n')
+
+print(best)
+
+best_params = {
+    'n_estimators': int(best['n_estimators']),
+    'max_depth': int(best['max_depth']),
+    'gamma': best['gamma'],
+    'reg_alpha': best['reg_alpha'],
+    'reg_lambda': best['reg_lambda'],
+    'colsample_bytree': best['colsample_bytree'],
+    'min_child_weight': int(best['min_child_weight']),
+    'learning_rate': best['learning_rate'],
+}
+
+# Convert best_params to a DataFrame
+best_params_df = pd.DataFrame([best_params])
+
+# Save to CSV
+best_params_df.to_csv("/data/hyper_params/microsoft/best_hyperparameters_davao_philippines_ms.csv", index=False)
+
+X_train = X
+y_train = y
+X_test = X_test_scaled_beta
+y_test = y_test_beta
+
+def ml(X_train, y_train, X_test, y_test):
+    '''ml is the fifth function after clean_df, engineering_df, median_calc, and train_test_val. It performs:
+    1. Linear regression on the train, test, and val data
+    2. XGBoost on the train, test, and val data
+    3. Transfers predictions back into the dataframe to investigate the error difference'''
+    print('Starting ml')
+    start_time=datetime.now()
+    # 1. Linear Regression
+    lin_model = LinearRegression()
+    lin_model.fit(X_train, y_train)
+    
+    # Linear Regression evaluation for training set
+    y_train_predict = lin_model.predict(X_train)
+    rmse = (np.sqrt(mean_squared_error(y_train, y_train_predict)))
+    mae = mean_absolute_error(y_train, y_train_predict)
+    r2 = r2_score(y_train, y_train_predict)
+
+    print("The linear regression performance for training set")
+    print("--------------------------------------")
+    print('RMSE is {}'.format(rmse))
+    print('MAE: {}'.format(mae))
+    print('R2 score is {}'.format(r2))
+    print("\n")
+    
+    # Linear Regression evaluation for testing set
+    y_test_predict = lin_model.predict(X_test)
+    rmse = (np.sqrt(mean_squared_error(y_test, y_test_predict)))
+    mae = mean_absolute_error(y_test, y_test_predict)
+    r2 = r2_score(y_test, y_test_predict)
+
+    print("The linear regression performance for testing set")
+    print("--------------------------------------")
+    print('RMSE is {}'.format(rmse))
+    print('MAE: {}'.format(mae))
+    print('R2 score is {}'.format(r2))
+    print("\n")
+    
+    # 2. XGBoost
+    reg = XGBRegressor(random_state=13)#**best_params)
+    # XGBoost evaluation for training set
+
+    reg.fit(X_train, y_train)
+    train_pred = reg.predict(X_train)
+    print("The XGBoost performance for training set")
+    print("--------------------------------------")
+    print('RMSE:',np.sqrt(mean_squared_error(y_train, train_pred)))
+    print('MAE:',mean_absolute_error(y_train, train_pred))
+    print('R^2:',r2_score(y_train, train_pred))
+    print('\n')
+    
+    # XGBoost evaluation for testing set
+    target_test_pred = reg.predict(X_test)
+    print("The XGBoost performance for testing set")
+    print("--------------------------------------")
+    print('RMSE:',np.sqrt(mean_squared_error(y_test, target_test_pred)))
+    print('MAE:',mean_absolute_error(y_test, target_test_pred))
+    print('R^2:',r2_score(y_test, target_test_pred))
+    print('\n')
+
+
+    # # 3. Error metrics to list
+    # #Adding in predicted values for validation data
+    y_test['predicted']=target_test_pred.tolist()
+    
+    # #Caculating the difference between height and predicted
+    y_test['difference']=y_test['height']-y_test['predicted']
+    
+    # #Calculating the absolute error of the difference column
+    y_test['abs_error']=y_test['difference'].abs()
+    y_test.to_csv('/data/results/microsoft/all_microsoft.csv')
+    print('successfully output data')
+
+
+    end_time=datetime.now()
+    print('Duration of ml: {}'.format(end_time-start_time))
+    # return y_test
+ml(X_train, y_train, X_test, y_test)
+
+def cross_val(X_train, y_train):
+    '''cross_val is the sixth function and its purpose is to cross validate the scores. It peforms:
+    1. splitting up the parameters into a dictionary
+    2. generates a XGBoost regressor model with the parameters from step 1
+    3. fits the model on the training data
+    4. runs 5 splits in a KFold function
+    5. stores the scores after training'''
+    print('Staring cross_val now')
+    start_time=datetime.now()
+    
+    # 2. Instantiating a model with best_params from above
+    xgb_cv=XGBRegressor(random_state=13)
+    
+    # 3. Fitting XGBoost on the training data
+    xgb_cv.fit(X_train, y_train)
+
+    # 4. determining number of splits on the data
+    kfold = KFold(n_splits=10,
+                  shuffle=True,
+                  random_state=13)
+    
+    # 5. Running cross validation on the training data
+    scores = cross_val_score(xgb_cv,
+                             X_train,
+                             y_train,
+                             cv=kfold,
+                             scoring='neg_mean_squared_error')
+    
+    end_time=datetime.now()
+
+    mse = -np.mean(scores)
+    print('Mean cross validation score: ', np.sqrt(mse))
+    print('Duration of cross validation: {}'.format(end_time-start_time))
+    return scores
+
+cross_val(X_train, y_train)
